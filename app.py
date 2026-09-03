@@ -91,7 +91,130 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+# ============================================================
+# STARTUP SCREEN
+# ============================================================
 
+if "startup_complete" not in st.session_state:
+
+    startup_placeholder = st.empty()
+
+    startup_placeholder.markdown(
+        """
+        <div style="
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100vh;
+            background: radial-gradient(
+                circle at center,
+                #172033 0%,
+                #0b0f18 55%,
+                #05070c 100%
+            );
+            z-index: 999999;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        ">
+
+            <div>
+
+                <div style="
+                    font-size: 72px;
+                    margin-bottom: 18px;
+                    animation: pulse 1.5s infinite;
+                ">
+                    🧠
+                </div>
+
+                <div style="
+                    font-size: 38px;
+                    font-weight: 700;
+                    letter-spacing: 2px;
+                    color: white;
+                    margin-bottom: 10px;
+                ">
+                    MRI TUMOR AI
+                </div>
+
+                <div style="
+                    font-size: 16px;
+                    color: #9ca3af;
+                    letter-spacing: 1px;
+                    margin-bottom: 30px;
+                ">
+                    DEEP LEARNING–DRIVEN BRAIN MRI ANALYSIS
+                </div>
+
+                <div style="
+                    width: 260px;
+                    height: 4px;
+                    background: #252b3a;
+                    border-radius: 10px;
+                    overflow: hidden;
+                    margin: auto;
+                ">
+                    <div style="
+                        height: 100%;
+                        width: 45%;
+                        background: linear-gradient(
+                            90deg,
+                            #7c3aed,
+                            #60a5fa
+                        );
+                        border-radius: 10px;
+                        animation: loading 1.8s infinite;
+                    "></div>
+                </div>
+
+                <div style="
+                    margin-top: 18px;
+                    font-size: 13px;
+                    color: #6b7280;
+                    letter-spacing: 1px;
+                ">
+                    INITIALIZING MODEL • LOADING ANALYTICS • READYING SYSTEM
+                </div>
+
+            </div>
+
+        </div>
+
+        <style>
+
+        @keyframes pulse {
+            0%, 100% {
+                transform: scale(1);
+                opacity: 0.75;
+            }
+            50% {
+                transform: scale(1.08);
+                opacity: 1;
+            }
+        }
+
+        @keyframes loading {
+            0% {
+                transform: translateX(-180%);
+            }
+            100% {
+                transform: translateX(650%);
+            }
+        }
+
+        </style>
+        """,
+        unsafe_allow_html=True
+    )
+
+    time.sleep(2.2)
+
+    startup_placeholder.empty()
+
+    st.session_state["startup_complete"] = True
 
 # ============================================================
 # LOAD MODEL
