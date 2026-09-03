@@ -100,7 +100,7 @@ if "startup_complete" not in st.session_state:
 
     startup_placeholder = st.empty()
 
-    startup_placeholder.html(
+    startup_placeholder.markdown(
         textwrap.dedent("""
         <div style="
             position: fixed;
