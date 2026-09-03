@@ -10,7 +10,7 @@ from datetime import datetime
 import hashlib
 import json
 import time
-
+import textwrap
 
 # ============================================================
 # PAGE CONFIG
@@ -91,6 +91,7 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
 # ============================================================
 # STARTUP SCREEN
 # ============================================================
@@ -100,7 +101,7 @@ if "startup_complete" not in st.session_state:
     startup_placeholder = st.empty()
 
     startup_placeholder.markdown(
-        """
+        textwrap.dedent("""
         <div style="
             position: fixed;
             top: 0;
@@ -206,7 +207,7 @@ if "startup_complete" not in st.session_state:
         }
 
         </style>
-        """,
+        """),
         unsafe_allow_html=True
     )
 
@@ -215,7 +216,6 @@ if "startup_complete" not in st.session_state:
     startup_placeholder.empty()
 
     st.session_state["startup_complete"] = True
-
 
 # ============================================================
 # LOAD MODEL
