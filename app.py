@@ -158,6 +158,7 @@ if "startup_complete" not in st.session_state:
                     overflow: hidden;
                     margin: auto;
                 ">
+
                     <div style="
                         height: 100%;
                         width: 45%;
@@ -169,6 +170,7 @@ if "startup_complete" not in st.session_state:
                         border-radius: 10px;
                         animation: loading 1.8s infinite;
                     "></div>
+
                 </div>
 
                 <div style="
@@ -191,6 +193,7 @@ if "startup_complete" not in st.session_state:
                 transform: scale(1);
                 opacity: 0.75;
             }
+
             50% {
                 transform: scale(1.08);
                 opacity: 1;
@@ -201,6 +204,7 @@ if "startup_complete" not in st.session_state:
             0% {
                 transform: translateX(-180%);
             }
+
             100% {
                 transform: translateX(650%);
             }
