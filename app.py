@@ -10,7 +10,6 @@ from datetime import datetime
 import hashlib
 import json
 import time
-import textwrap
 
 # ============================================================
 # PAGE CONFIG
@@ -18,7 +17,7 @@ import textwrap
 
 st.set_page_config(
     page_title="MRI Tumor AI",
-    page_icon="🧠",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -41,6 +40,61 @@ MODEL_PATH = os.path.join(
 IMG_SIZE = 224
 THRESHOLD = 0.05
 IG_STEPS = 32
+
+
+# Case-specific session state is explicitly tied to the active uploaded image.
+_CASE_EXPLANATION_KEYS = (
+    "attribution",
+    "attribution_summary",
+    "attribution_case_fingerprint",
+    "analysis_time",
+)
+_CASE_ALL_KEYS = (
+    "image_array",
+    "original_image",
+    "probability",
+    "prediction",
+    "filename",
+    "active_case_fingerprint",
+    "active_case_id",
+    "active_case_timestamp",
+    *_CASE_EXPLANATION_KEYS,
+)
+
+
+def clear_case_session_state(session_state):
+    """Remove image-specific state when no image is selected."""
+    for key in _CASE_ALL_KEYS:
+        session_state.pop(key, None)
+
+
+def activate_case_session_state(session_state, case_fingerprint):
+    """Start a clean case only when the upload fingerprint changes."""
+    if session_state.get("active_case_fingerprint") == case_fingerprint:
+        return False
+
+    for key in _CASE_EXPLANATION_KEYS:
+        session_state.pop(key, None)
+
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    case_id = hashlib.sha256(
+        f"{case_fingerprint}|{time.time_ns()}".encode("utf-8")
+    ).hexdigest()[:12].upper()
+
+    session_state["active_case_fingerprint"] = case_fingerprint
+    session_state["active_case_id"] = case_id
+    session_state["active_case_timestamp"] = created_at
+    return True
+
+
+def case_explanation_is_current(session_state, case_fingerprint):
+    """Return True only when attribution and active upload belong to one case."""
+    return bool(
+        case_fingerprint
+        and "attribution_summary" in session_state
+        and session_state.get("attribution_case_fingerprint") == case_fingerprint
+        and session_state.get("active_case_fingerprint") == case_fingerprint
+    )
 
 
 # ============================================================
@@ -91,6 +145,7 @@ st.markdown(
     """,
     unsafe_allow_html=True
 )
+
 # ============================================================
 # LOAD MODEL
 # ============================================================
@@ -261,6 +316,9 @@ def compute_integrated_gradients(
     )
 
     return importance
+
+
+
 
 # ============================================================
 # CASE ANALYTICS HELPERS
@@ -481,21 +539,19 @@ def build_case_report(
     probability,
     prediction,
     analytics,
-    attr_summary
+    attr_summary,
+    case_id,
+    analysis_timestamp
 ):
 
-    timestamp = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    case_id = hashlib.sha256(
-        f"{filename}|{timestamp}".encode()
-    ).hexdigest()[:12].upper()
+    # Use the ID and timestamp assigned to the active upload so that
+    # the TXT and JSON exports identify the same case consistently.
+    timestamp = analysis_timestamp
 
     result = (
-        "Tumor"
+        "Tumor Detected"
         if prediction == 1
-        else "No Tumor"
+        else "No Tumor Detected"
     )
 
     return f"""
@@ -514,7 +570,7 @@ AI RESULT
 Prediction           : {result}
 Tumor probability    : {probability:.2%}
 Decision threshold   : {THRESHOLD:.2%}
-Threshold status     : {"ABOVE" if probability >= THRESHOLD else "BELOW"}
+Threshold status     : {"ABOVE_OR_EQUAL" if probability >= THRESHOLD else "BELOW"}
 
 IMAGE INFORMATION
 -----------------
@@ -534,10 +590,10 @@ EXPLAINABILITY
 --------------
 Method               : Integrated Gradients
 Steps                : {IG_STEPS}
-Attribution mean     : {attr_summary["mean"]:.8e}
-Attribution minimum  : {attr_summary["min"]:.8e}
-Attribution maximum  : {attr_summary["max"]:.8e}
-Positive attribution : {attr_summary["positive_fraction"]:.2%}
+Importance map mean  : {attr_summary["mean"]:.8e}
+Importance map min   : {attr_summary["min"]:.8e}
+Importance map max   : {attr_summary["max"]:.8e}
+Non-zero importance  : {attr_summary["nonzero_importance_fraction"]:.2%}
 
 INDEPENDENT TEST PERFORMANCE
 ----------------------------
@@ -636,7 +692,7 @@ def show_confusion_matrix():
 # ============================================================
 
 st.markdown(
-    '<div class="main-title">🧠 MRI Tumor AI</div>',
+    '<div class="main-title"> MRI Tumor AI</div>',
     unsafe_allow_html=True
 )
 
@@ -655,7 +711,7 @@ st.markdown(
 
 with st.sidebar:
 
-    st.header("⚙️ Model Information")
+    st.header("Model Information")
 
     st.write(
         "**Architecture**"
@@ -687,7 +743,7 @@ with st.sidebar:
 
     st.divider()
 
-    st.header("📊 Test Performance")
+    st.header("Test Performance")
 
     st.metric(
         "Accuracy",
@@ -733,10 +789,10 @@ with st.sidebar:
 
 tab_detection, tab_performance, tab_explain, tab_about = st.tabs(
     [
-        "🔬 Detection",
-        "📊 Model Performance",
-        "🔍 Explainability",
-        "ℹ️ About"
+        "Detection",
+        "Model Performance",
+        "Explainability",
+        "About"
     ]
 )
 
@@ -775,6 +831,21 @@ with tab_detection:
             original_image
         )
 
+        # Tie all case-specific outputs to the actual uploaded image content
+        # and filename. A changed upload invalidates any previous explanation.
+        fingerprint_hash = hashlib.sha256()
+        fingerprint_hash.update(uploaded_file.name.encode("utf-8"))
+        fingerprint_hash.update(b"\0")
+        fingerprint_hash.update(uploaded_file.getvalue())
+        fingerprint_hash.update(b"\0")
+        fingerprint_hash.update(image_array.tobytes())
+        case_fingerprint = fingerprint_hash.hexdigest()
+
+        activate_case_session_state(
+            st.session_state,
+            case_fingerprint,
+        )
+
         probability, prediction = predict(
             image_array
         )
@@ -790,7 +861,7 @@ with tab_detection:
         with left:
 
             st.markdown(
-                "### 🖼️ Input MRI"
+                "###  Input MRI"
             )
 
             st.image(
@@ -805,24 +876,24 @@ with tab_detection:
         with right:
 
             st.markdown(
-                "### 🧠 AI Result"
+                "###  AI Result"
             )
 
             if prediction == 1:
 
                 st.error(
-                    "⚠️ TUMOR DETECTED"
+                    " TUMOR DETECTED"
                 )
 
-                result_text = "Tumor"
+                result_text = "Tumor Detected"
 
             else:
 
                 st.success(
-                    "✓ NO TUMOR DETECTED"
+                    " NO TUMOR DETECTED"
                 )
 
-                result_text = "No Tumor"
+                result_text = "No Tumor Detected"
 
             st.metric(
                 "Tumor Probability",
@@ -851,9 +922,48 @@ with tab_detection:
         st.divider()
 
         st.info(
-            "The prediction is generated by the trained "
-            "EfficientNetB0 model using a threshold selected "
-            "from the validation dataset."
+            "The prediction is generated by the trained EfficientNetB0 model "
+            "using the configured operating threshold (0.05)."
+        )
+
+        # ====================================================
+        # MODEL DECISION INTERPRETATION
+        # ====================================================
+
+        st.markdown("### Model Decision Interpretation")
+
+        if probability >= THRESHOLD:
+            decision_status = "Positive classification"
+            decision_text = (
+                "The predicted tumor probability is at or above "
+                "the configured decision threshold."
+            )
+        else:
+            decision_status = "Negative classification"
+            decision_text = (
+                "The predicted tumor probability is below "
+                "the configured decision threshold."
+            )
+
+        d1, d2 = st.columns(2)
+
+        with d1:
+            st.metric(
+                "Decision Status",
+                decision_status
+            )
+
+        with d2:
+            st.metric(
+                "Distance from Threshold",
+                f"{abs(probability - THRESHOLD):.2%}"
+            )
+
+        st.write(decision_text)
+
+        st.caption(
+            "This status reflects the model's configured decision rule "
+            "and should not be interpreted as a clinical diagnosis."
         )
 
         # Store for explainability
@@ -865,8 +975,12 @@ with tab_detection:
 
     else:
 
+        # When the uploader is cleared, remove cached image and explanation
+        # data so a previous case cannot remain exportable.
+        clear_case_session_state(st.session_state)
+
         st.info(
-            "👆 Upload a brain MRI image to begin analysis."
+            " Upload a brain MRI image to begin analysis."
         )
 
 
@@ -984,7 +1098,7 @@ with tab_performance:
 with tab_explain:
 
     st.subheader(
-        "🔍 Model Explainability & Case Analysis"
+        "Model Explainability & Case Analysis"
     )
 
     st.write(
@@ -1035,7 +1149,7 @@ with tab_explain:
         )
 
         st.markdown(
-            "### 🧾 Image Information"
+            "###  Image Information"
         )
 
         c1, c2, c3, c4 = st.columns(4)
@@ -1101,7 +1215,7 @@ with tab_explain:
         # ====================================================
 
         st.markdown(
-            "### 🧪 Image Quality Indicators"
+            "### Image Quality Indicators"
         )
 
         q1, q2, q3 = st.columns(3)
@@ -1130,7 +1244,7 @@ with tab_explain:
         # ====================================================
 
         st.markdown(
-            "### 📈 Live Prediction Analysis"
+            "###  Live Prediction Analysis"
         )
 
         prob_fig = probability_graph(
@@ -1151,7 +1265,7 @@ with tab_explain:
             f"P(Tumor) = {probability:.2%}  |  "
             f"Threshold = {THRESHOLD:.2%}  |  "
             f"Prediction = "
-            f"{'Tumor' if prediction == 1 else 'No Tumor'}"
+            f"{'Tumor Detected' if prediction == 1 else 'No Tumor Detected'}"
         )
 
         # ====================================================
@@ -1159,7 +1273,7 @@ with tab_explain:
         # ====================================================
 
         st.markdown(
-            "### 📊 Uploaded MRI Analytics"
+            "###  Uploaded MRI Analytics"
         )
 
         graph1, graph2 = st.columns(2)
@@ -1199,11 +1313,11 @@ with tab_explain:
         # ====================================================
 
         st.markdown(
-            "### 🔬 Integrated Gradients Explanation"
+            "###  Integrated Gradients Importance Map"
         )
 
         generate = st.button(
-            "🔍 Generate Explanation",
+            " Generate Explanation",
             type="primary"
         )
 
@@ -1233,18 +1347,12 @@ with tab_explain:
             )
 
             attr_summary = {
-                "mean": float(
-                    np.mean(attr)
-                ),
-                "min": float(
-                    np.min(attr)
-                ),
-                "max": float(
-                    np.max(attr)
-                ),
-                "positive_fraction": float(
-                    np.mean(attr > 0)
-                )
+                # These statistics describe the returned, nonnegative,
+                # normalized and smoothed importance map—not signed raw IG.
+                "mean": float(np.mean(attr)),
+                "min": float(np.min(attr)),
+                "max": float(np.max(attr)),
+                "nonzero_importance_fraction": float(np.mean(attr > 0)),
             }
 
             st.session_state[
@@ -1254,6 +1362,10 @@ with tab_explain:
             st.session_state[
                 "attribution_summary"
             ] = attr_summary
+
+            st.session_state[
+                "attribution_case_fingerprint"
+            ] = case_fingerprint
 
             st.session_state[
                 "analysis_time"
@@ -1283,7 +1395,7 @@ with tab_explain:
             )
 
             axes[1].set_title(
-                "Integrated Gradients"
+                "Integrated Gradients Importance Map"
             )
 
             axes[1].axis(
@@ -1301,7 +1413,7 @@ with tab_explain:
             )
 
             axes[2].set_title(
-                f"Tumor Contribution\n"
+                f"Model Attribution Overlay\n"
                 f"P(Tumor) = {probability:.4f}"
             )
 
@@ -1323,7 +1435,7 @@ with tab_explain:
             # =================================================
 
             st.markdown(
-                "### 📌 Attribution Summary"
+                "###  Importance Map Summary"
             )
 
             s1, s2, s3, s4 = st.columns(4)
@@ -1348,8 +1460,8 @@ with tab_explain:
 
             with s4:
                 st.metric(
-                    "Positive Fraction",
-                    f'{attr_summary["positive_fraction"]:.2%}'
+                    "Non-zero Importance Fraction",
+                    f'{attr_summary["nonzero_importance_fraction"]:.2%}'
                 )
 
             st.success(
@@ -1363,19 +1475,45 @@ with tab_explain:
                 "segmentation or tumor-size measurements."
             )
 
+            # ====================================================
+            # CASE-LEVEL INTERPRETATION
+            # ====================================================
+
+            st.markdown("### Case-Level Interpretation")
+
+            if prediction == 1:
+                interpretation = (
+                    f"The model classified this MRI as Tumor Detected "
+                    f"with a tumor probability of {probability:.2%}. "
+                    f"The probability is {probability - THRESHOLD:.2%} "
+                    f"above the configured decision threshold."
+                )
+            else:
+                interpretation = (
+                    f"The model classified this MRI as No Tumor Detected "
+                    f"with a tumor probability of {probability:.2%}. "
+                    f"The probability is {THRESHOLD - probability:.2%} "
+                    f"below the configured decision threshold."
+                )
+
+            st.write(interpretation)
+
+            st.caption(
+                "This interpretation describes the model output and "
+                "attribution analysis. It does not constitute a "
+                "clinical diagnosis."
+            )
+
         # ====================================================
         # CASE REPORT
         # ====================================================
 
-        if (
-            "attribution_summary"
-            in st.session_state
-        ):
+        if case_explanation_is_current(st.session_state, case_fingerprint):
 
             st.divider()
 
             st.markdown(
-                "### 📄 Individual Case Report"
+                "###  Individual Case Report"
             )
 
             attr_summary = (
@@ -1384,26 +1522,34 @@ with tab_explain:
                 ]
             )
 
+            active_case_id = st.session_state["active_case_id"]
+            active_case_timestamp = st.session_state["active_case_timestamp"]
+
             report = build_case_report(
                 filename,
                 probability,
                 prediction,
                 analytics,
-                attr_summary
+                attr_summary,
+                active_case_id,
+                active_case_timestamp,
             )
 
             report_json = json.dumps(
                 {
                     "project": "MRI Tumor AI",
+                    "case_id": active_case_id,
+                    "analysis_time": active_case_timestamp,
                     "filename": filename,
                     "model": "MRI_EfficientNetB0",
                     "prediction": (
-                        "Tumor"
+                        "Tumor Detected"
                         if prediction == 1
-                        else "No Tumor"
+                        else "No Tumor Detected"
                     ),
                     "tumor_probability": probability,
                     "decision_threshold": THRESHOLD,
+                    "threshold_status": "ABOVE_OR_EQUAL" if probability >= THRESHOLD else "BELOW",
                     "image_analytics": analytics,
                     "explainability": {
                         "method": "Integrated Gradients",
@@ -1427,7 +1573,7 @@ with tab_explain:
             with r1:
 
                 st.download_button(
-                    "📄 Download Case Report",
+                    " Download Case Report",
                     data=report,
                     file_name="MRI_Tumor_AI_Case_Report.txt",
                     mime="text/plain",
@@ -1437,12 +1583,18 @@ with tab_explain:
             with r2:
 
                 st.download_button(
-                    "🗂️ Download Results JSON",
+                    " Download Results JSON",
                     data=report_json,
                     file_name="MRI_Tumor_AI_Case_Results.json",
                     mime="application/json",
                     use_container_width=True
                 )
+
+        else:
+            st.info(
+                "Generate an Integrated Gradients importance map for the current MRI "
+                "to enable case-report exports. Previous-case explanations are not reused."
+            )
 
 
 # ============================================================
@@ -1510,7 +1662,7 @@ with tab_about:
 
     st.warning(
         """
-        ⚠️ RESEARCH DISCLAIMER
+         RESEARCH DISCLAIMER
 
         This application is an academic/research prototype.
         It is not a medical device and must not be used as
